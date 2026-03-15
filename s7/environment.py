@@ -54,17 +54,31 @@ def build_environment(
         echo_collector.append(msg)
 
     def _send(target: Any, *args: Any) -> None:
-        chan = resolve(target)[0]
-        text = f"[<@{user_id}>] " + " ".join(str(a) for a in args)
-        client.chat_postMessage(channel=chan, text=text)
+        # _send(target, message...) or _send(message...) defaults to #!
+        if args:
+            # _send(target, message...)
+            target_id = resolve(target)[0]
+            text = f"[<@{user_id}>] " + " ".join(str(a) for a in args)
+        else:
+            # _send(message...) - send to current channel
+            target_id = channel_id
+            text = f"[<@{user_id}>] " + str(target)
+        client.chat_postMessage(channel=target_id, text=text)
 
     def _send2(target: Any, *args: Any) -> None:
-        chan = resolve(target)[0]
-        if user_id in power_users:
-            text = " ".join(str(a) for a in args)
+        if args:
+            target_id = resolve(target)[0]
+            if user_id in power_users:
+                text = " ".join(str(a) for a in args)
+            else:
+                text = f"[<@{user_id}>] " + " ".join(str(a) for a in args)
         else:
-            text = f"[<@{user_id}>] " + " ".join(str(a) for a in args)
-        client.chat_postMessage(channel=chan, text=text)
+            target_id = channel_id
+            if user_id in power_users:
+                text = str(target)
+            else:
+                text = f"[<@{user_id}>] " + str(target)
+        client.chat_postMessage(channel=target_id, text=text)
 
     def _members(channel: Any) -> List[str]:
         cid = resolve(channel)[0]
@@ -103,6 +117,23 @@ def build_environment(
                     client.conversations_kick(channel=cid, user=uid)
                 except Exception as e:
                     echo_collector.append(f"kick error ({uid}): {e}")
+
+    def _email(member: Any) -> str:
+        """Get email of a member."""
+        uid = resolve([member])[0]
+        if not uid.startswith("U"):
+            raise S7Error("email requires a user ID")
+        resp = client.users_profile_get(user=uid)
+        return resp["profile"]["email"]
+
+    def _profile(member: Any, field: str = "display_name") -> str:
+        """Get profile field of a member. Fields: display_name, real_name, title, status_text, etc."""
+        uid = resolve([member])[0]
+        if not uid.startswith("U"):
+            raise S7Error("profile requires a user ID")
+        resp = client.users_profile_get(user=uid)
+        profile = resp["profile"]
+        return profile.get(field, "")
 
     def _strjoin(sep: Any, *lists: Any) -> str:
         flat = resolve(list(lists))
@@ -205,6 +236,8 @@ def build_environment(
         "members": _members,
         "addto": _addto,
         "kick": _kick,
+        "email": _email,
+        "profile": _profile,
 
         # Math extras
         "abs": lambda x: abs(x),

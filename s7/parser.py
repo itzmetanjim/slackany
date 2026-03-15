@@ -128,16 +128,14 @@ class Parser:
 
         # 'not' keyword as prefix (only at top level / outside s-expr head)
         if tok[0] == TOK_SYMBOL and tok[1] == "not":
-            # Peek ahead: if next token after 'not' is NOT '(' or is a simple
-            # atom, treat as prefix.  But since this is called from top-level
-            # and from parse_element for ! only, this branch handles standalone
-            # `not x` usage.
             self.advance()
             operand = self.parse_expr()
             return ["not", operand]
 
         if tok[0] == TOK_LPAREN:
             result = self.parse_sexp()
+        elif tok[0] == TOK_LBRACKET:
+            result = self.parse_list()
         else:
             result = self.parse_atom()
 
@@ -168,6 +166,8 @@ class Parser:
 
         if tok[0] == TOK_LPAREN:
             result = self.parse_sexp()
+        elif tok[0] == TOK_LBRACKET:
+            result = self.parse_list()
         else:
             result = self.parse_atom()
 
@@ -179,6 +179,20 @@ class Parser:
             result = ["index", result, idx]
 
         return result
+
+    # -- List literal [a, b, c] --------------------------------------------
+
+    def parse_list(self) -> Expr:
+        """Parse [ ... ] as a list literal."""
+        self.expect(TOK_LBRACKET)
+        elements: List[Expr] = []
+        while self.peek() and self.peek()[0] != TOK_RBRACKET:
+            elements.append(self.parse_element())
+            # Allow comma separator
+            if self.peek() and self.peek()[0] == TOK_SYMBOL and self.peek()[1] == ",":
+                self.advance()
+        self.expect(TOK_RBRACKET)
+        return elements
 
     # -- S-Expression -------------------------------------------------------
 

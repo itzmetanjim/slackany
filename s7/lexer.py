@@ -28,6 +28,7 @@ Token = Tuple[str, str]  # (type, value)
 
 # Patterns tried in order
 _PATTERNS: List[Tuple[str, str]] = [
+    (TOK_SLACK_ENTITY, r"<@U[A-Z0-9]+\|[^>]*>"),     # User mention with label
     (TOK_SLACK_ENTITY, r"<@U[A-Z0-9]+>"),           # User mention
     (TOK_SLACK_ENTITY, r"<#C[A-Z0-9]+\|[^>]*>"),    # Channel mention with label
     (TOK_SLACK_ENTITY, r"<#C[A-Z0-9]+>"),            # Channel mention without label
