@@ -123,17 +123,20 @@ def build_environment(
         uid = resolve([member])[0]
         if not uid.startswith("U"):
             raise S7Error("email requires a user ID")
-        resp = client.users_profile_get(user=uid)
-        return resp["profile"]["email"]
+        resp = client.users_info(user=uid)
+        user = resp["user"]
+        profile = user.get("profile", {})
+        return profile.get("email", user.get("name", "") + "@unknown")
 
     def _profile(member: Any, field: str = "display_name") -> str:
         """Get profile field of a member. Fields: display_name, real_name, title, status_text, etc."""
         uid = resolve([member])[0]
         if not uid.startswith("U"):
             raise S7Error("profile requires a user ID")
-        resp = client.users_profile_get(user=uid)
-        profile = resp["profile"]
-        return profile.get(field, "")
+        resp = client.users_info(user=uid)
+        user = resp["user"]
+        profile = user.get("profile", {})
+        return profile.get(field, user.get(field, ""))
 
     def _strjoin(sep: Any, *lists: Any) -> str:
         flat = resolve(list(lists))
