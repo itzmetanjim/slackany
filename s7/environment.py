@@ -53,18 +53,18 @@ def build_environment(
         msg = " ".join(str(a) for a in args)
         echo_collector.append(msg)
 
-    def _send(target: Any, *args: Any) -> Any:
+    def _send(target: Any, *args: Any) -> None:
         chan = resolve(target)[0]
         text = f"[<@{user_id}>] " + " ".join(str(a) for a in args)
-        return client.chat_postMessage(channel=chan, text=text)
+        client.chat_postMessage(channel=chan, text=text)
 
-    def _send2(target: Any, *args: Any) -> Any:
+    def _send2(target: Any, *args: Any) -> None:
         chan = resolve(target)[0]
         if user_id in power_users:
             text = " ".join(str(a) for a in args)
         else:
             text = f"[<@{user_id}>] " + " ".join(str(a) for a in args)
-        return client.chat_postMessage(channel=chan, text=text)
+        client.chat_postMessage(channel=chan, text=text)
 
     def _members(channel: Any) -> List[str]:
         cid = resolve(channel)[0]
@@ -81,36 +81,28 @@ def build_environment(
                 break
         return result
 
-    def _addto(*args: Any) -> Any:
+    def _addto(*args: Any) -> None:
         all_ids = resolve(list(args))
         users = [uid for uid in all_ids if uid.startswith("U")]
         channels = [cid for cid in all_ids if cid.startswith("C")]
-        results = []
         for c in channels:
             if users:
                 try:
-                    results.append(
-                        client.conversations_invite(channel=c, users=users)
-                    )
+                    client.conversations_invite(channel=c, users=users)
                 except Exception as e:
                     echo_collector.append(f"addto error ({c}): {e}")
-        return results
 
-    def _kick(channel: Any, *targets: Any) -> Any:
+    def _kick(channel: Any, *targets: Any) -> None:
         if user_id not in power_users:
             raise S7Error("kick requires power-user privileges")
         cid = resolve(channel)[0]
         user_ids = resolve(list(targets))
-        results = []
         for uid in user_ids:
             if uid.startswith("U"):
                 try:
-                    results.append(
-                        client.conversations_kick(channel=cid, user=uid)
-                    )
+                    client.conversations_kick(channel=cid, user=uid)
                 except Exception as e:
                     echo_collector.append(f"kick error ({uid}): {e}")
-        return results
 
     def _strjoin(sep: Any, *lists: Any) -> str:
         flat = resolve(list(lists))
