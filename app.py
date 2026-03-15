@@ -134,6 +134,7 @@ def handle_s7_command(ack, body, client, respond):
     text: str = body.get("text", "")
     channel_id: str = body.get("channel_id", "")
     user_id: str = body.get("user_id", "")
+    executed_code: str = ""
 
     try:
         first, rest = parse_command_text(text)
@@ -164,6 +165,7 @@ def handle_s7_command(ack, body, client, respond):
             if not rest:
                 respond("Usage: `/s7 help` for available commands.")
                 return
+            executed_code = rest
             result, echoes = execute_s7(
                 rest, client, channel_id, user_id
             )
@@ -173,6 +175,7 @@ def handle_s7_command(ack, body, client, respond):
         # --- Mode: macro execution ---
         code = macro_store.get(first)
         if code is not None:
+            executed_code = f"; macro: {first}\n{code}"
             args = parse_args_for_macro(rest)
             result, echoes = execute_s7(
                 code, client, channel_id, user_id,
@@ -186,11 +189,14 @@ def handle_s7_command(ack, body, client, respond):
 
     except StepLimitExceeded as e:
         respond(f":warning: *Execution killed:* {e}")
+        respond(f"```\n{executed_code}\n```")
     except S7Error as e:
         respond(f":x: *S7 Error:* {e}")
+        respond(f"```\n{executed_code}\n```")
     except Exception as e:
         logger.error("Unhandled error in /s7: %s", traceback.format_exc())
         respond(f":x: *Internal error:* {e}")
+        respond(f"```\n{executed_code}\n```")
 
 
 # -- Sub-handlers -----------------------------------------------------------
@@ -275,8 +281,7 @@ def _send_result(respond, result, echoes: List[str]):
         parts.append(f"Result: `{result}`")
     if parts:
         respond("\n".join(parts))
-    else:
-        respond(":white_check_mark: Executed (no output).")
+    # Silent on success with no output
 
 
 # ---------------------------------------------------------------------------
