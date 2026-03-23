@@ -400,3 +400,118 @@ class TestErrors:
         interp, _ = make_interpreter()
         with pytest.raises(S7Error):
             interp.run("(42 1 2)")
+
+
+# ---------------------------------------------------------------------------
+# Return
+# ---------------------------------------------------------------------------
+
+class TestReturn:
+    def test_return_no_value(self):
+        interp, _ = make_interpreter()
+        result = interp.run("""
+            (begin
+                (return)
+                (+ 1 2))
+        """)
+        assert result is None
+
+    def test_return_with_value(self):
+        interp, _ = make_interpreter()
+        result = interp.run("""
+            (begin
+                (return 42)
+                (+ 1 2))
+        """)
+        assert result == 42
+
+    def test_return_in_lambda(self):
+        interp, _ = make_interpreter()
+        result = interp.run("""
+            (begin
+                (define (early x)
+                    (if (x > 5)
+                        (return "big"))
+                    "small")
+                (early 10))
+        """)
+        assert result == "big"
+
+    def test_return_in_lambda_fallthrough(self):
+        interp, _ = make_interpreter()
+        result = interp.run("""
+            (begin
+                (define (early x)
+                    (if (x > 5)
+                        (return "big"))
+                    "small")
+                (early 3))
+        """)
+        assert result == "small"
+
+    def test_return_in_foreach(self):
+        interp, _ = make_interpreter()
+        result = interp.run("""
+            (begin
+                (define result 0)
+                (foreach x (list 1 2 3 4 5)
+                    (if (= x 3)
+                        (return x))
+                    (set result x))
+                result)
+        """)
+        # return exits the entire execution, not just the foreach
+        assert result == 3
+
+
+# ---------------------------------------------------------------------------
+# Error
+# ---------------------------------------------------------------------------
+
+class TestErrorForm:
+    def test_error_throws(self):
+        interp, _ = make_interpreter()
+        with pytest.raises(S7Error, match="Something went wrong"):
+            interp.run('(error "Something went wrong")')
+
+    def test_error_with_expression(self):
+        interp, _ = make_interpreter()
+        with pytest.raises(S7Error, match="Value is 42"):
+            interp.run('(error (concat "Value is " 42))')
+
+
+# ---------------------------------------------------------------------------
+# Local Macros
+# ---------------------------------------------------------------------------
+
+class TestLocalMacros:
+    def test_macro_define_and_call(self):
+        interp, _ = make_interpreter()
+        result = interp.run("""
+            (begin
+                (macro "double" (* (index args 0) 2))
+                (call "double" 21))
+        """)
+        assert result == 42
+
+    def test_macro_with_multiple_args(self):
+        interp, _ = make_interpreter()
+        result = interp.run("""
+            (begin
+                (macro "sum3" (+ (index args 0) (+ (index args 1) (index args 2))))
+                (call "sum3" 10 20 30))
+        """)
+        assert result == 60
+
+    def test_local_macro_scoped_to_execution(self):
+        interp, _ = make_interpreter()
+        # First execution defines a local macro
+        interp.run('(macro "test" 123)')
+        # Should be able to call it in the same interpreter
+        result = interp.run('(call "test")')
+        assert result == 123
+
+    def test_call_undefined_macro_without_store(self):
+        interp, _ = make_interpreter()
+        with pytest.raises(S7Error, match="macro store not available"):
+            interp.run('(call "nonexistent")')

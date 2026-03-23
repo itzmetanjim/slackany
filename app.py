@@ -25,6 +25,7 @@ from s7.environment import build_environment
 from s7.interpreter import Interpreter, S7Error, StepLimitExceeded
 from s7.macros import MacroStore
 from s7.parser import parse
+from s7.storage import S7Store
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -39,6 +40,7 @@ POWER_USERS: List[str] = [
     u.strip() for u in os.environ.get("POWER_USERS", "").split(",") if u.strip()
 ]
 DB_PATH = os.environ.get("S7_DB_PATH", "s7_macros.db")
+STORAGE_DB_PATH = os.environ.get("S7_STORAGE_DB_PATH", "s7_storage.db")
 DEFAULT_STEP_LIMIT = 50000
 
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +52,7 @@ logger = logging.getLogger("s7")
 
 app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
 macro_store = MacroStore(DB_PATH)
+storage = S7Store(STORAGE_DB_PATH)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -96,6 +99,9 @@ def execute_s7(
     channel_id: str,
     user_id: str,
     extra_bindings: dict | None = None,
+    macro_store_ref=None,
+    storage_ref=None,
+    trigger_id: str | None = None,
 ) -> tuple[str | None, List[str]]:
     """
     Execute S7 code and return (result, echo_lines).
@@ -112,12 +118,19 @@ def execute_s7(
         user_id=user_id,
         power_users=POWER_USERS,
         echo_collector=echo_lines,
+        storage=storage_ref,
+        trigger_id=trigger_id,
     )
     if extra_bindings:
         for k, v in extra_bindings.items():
             env.set(k, v)
 
-    interp = Interpreter(env, step_limit=step_limit)
+    interp = Interpreter(
+        env,
+        step_limit=step_limit,
+        macro_store=macro_store_ref,
+        caller_user_id=user_id,
+    )
     result = interp.run(code)
     return result, echo_lines
 
@@ -160,6 +173,11 @@ def handle_s7_command(ack, body, client, respond):
             _handle_help(respond)
             return
 
+        # --- Mode: store ---
+        if lower_first == "store":
+            _handle_store(rest, user_id, respond)
+            return
+
         # --- Mode: direct execution ---
         if first == "":
             if not rest:
@@ -167,19 +185,31 @@ def handle_s7_command(ack, body, client, respond):
                 return
             executed_code = rest
             result, echoes = execute_s7(
-                rest, client, channel_id, user_id
+                rest, client, channel_id, user_id,
+                macro_store_ref=macro_store,
+                storage_ref=storage,
             )
             _send_result(respond, result, echoes)
             return
 
         # --- Mode: macro execution ---
-        code = macro_store.get(first)
-        if code is not None:
+        macro_data = macro_store.get_with_author(first)
+        if macro_data is not None:
+            code, author = macro_data
+            # User-dependent macros: only the author can execute their macro
+            if author != user_id:
+                respond(
+                    f":lock: Macro `{first}` belongs to <@{author}>. "
+                    "You can only execute macros you created."
+                )
+                return
             executed_code = f"; macro: {first}\n{code}"
             args = parse_args_for_macro(rest)
             result, echoes = execute_s7(
                 code, client, channel_id, user_id,
                 extra_bindings={"args": args},
+                macro_store_ref=macro_store,
+                storage_ref=storage,
             )
             _send_result(respond, result, echoes)
             return
@@ -249,6 +279,24 @@ def _handle_list(respond):
     respond("\n".join(lines))
 
 
+def _handle_store(rest: str, user_id: str, respond):
+    """Handle /s7 store [clear]."""
+    rest = rest.strip().lower()
+    if rest == "clear":
+        count = storage.clear_user(user_id)
+        respond(f":white_check_mark: Cleared {count} stored key(s).")
+        return
+    
+    keys = storage.list_keys(user_id)
+    if not keys:
+        respond("No stored data. Use `(store \"key\" value)` to save data.")
+        return
+    lines = ["*Your Stored Keys:*"]
+    for key, updated in keys:
+        lines.append(f"  `{key}` (updated {updated})")
+    respond("\n".join(lines))
+
+
 def _handle_help(respond):
     """Handle /s7 help."""
     respond(
@@ -258,13 +306,26 @@ def _handle_help(respond):
         "• `/s7 set <name>\\n<code>` — Save a named macro\n"
         "• `/s7 remove <name>` — Delete a macro\n"
         "• `/s7 list` — Show all saved macros\n"
-        "• `/s7 <name> <args...>` — Execute a saved macro\n\n"
+        "• `/s7 <name> <args...>` — Execute a saved macro\n"
+        "• `/s7 store` — List your stored keys\n"
+        "• `/s7 store clear` — Clear all your stored data\n\n"
         "*Built-in Functions:*\n"
         "`echo`, `send`, `send2`, `members`, `addto`, `kick`, "
         "`email`, `profile`, `str`, `strjoin`, `concat`, `length`, `index`, `flatten`, "
         "`append`, `range`, `filter`, `map`, `abs`, `min`, `max`, `mod`\n\n"
+        "*Storage:*\n"
+        "`(store \"key\" value)` — Save a value\n"
+        "`(read \"key\")` — Read a stored value (nil if not found)\n"
+        "`(delete \"key\")` — Delete a stored key\n\n"
+        "*Interactive UI:*\n"
+        "`(sendi #channel \"msg\" \"btn1:macro1\" ...)` — Send message with buttons\n"
+        "`(showui \"title\" \"callback\" \"field1\" ...)` — Open modal form (from button)\n\n"
         "*Control Flow:*\n"
-        "`if`/`elif`/`else`, `foreach`, `begin`, `define`, `lambda`, `let`\n\n"
+        "`if`/`elif`/`else`, `foreach`, `begin`, `define`, `lambda`, `let`\n"
+        "`(return)`, `(return value)` — Early return\n"
+        "`(error \"msg\")` — Throw an error\n"
+        "`(macro \"name\" body)` — Define a local macro\n"
+        "`(call \"name\" args...)` — Call a macro\n\n"
         "*Context:*\n"
         "`#!` → current channel, `@!` → current user\n\n"
         "*Data:*\n"
@@ -292,6 +353,202 @@ def _send_result(respond, result, echoes: List[str]):
 
 app.command("/s7")(handle_s7_command)
 app.command("/slackany")(handle_s7_command)
+
+
+# ---------------------------------------------------------------------------
+# Interactive button handler
+# ---------------------------------------------------------------------------
+
+@app.action(re.compile(r"s7_button_.*"))
+def handle_s7_button(ack, body, client, respond):
+    """Handle button clicks from sendi messages."""
+    ack()
+    
+    action = body.get("actions", [{}])[0]
+    action_id = action.get("action_id", "")
+    macro_name = action.get("value", "")
+    
+    # The clicking user runs the macro (user-dependent)
+    user_id = body.get("user", {}).get("id", "")
+    channel_id = body.get("channel", {}).get("id", "")
+    trigger_id = body.get("trigger_id", None)
+    
+    if not macro_name:
+        return
+    
+    # Look up the macro
+    macro_data = macro_store.get_with_author(macro_name)
+    if macro_data is None:
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text=f":x: Macro `{macro_name}` not found.",
+        )
+        return
+    
+    code, author = macro_data
+    
+    # User-dependent check: clicking user must be the author
+    if author != user_id:
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text=f":lock: Macro `{macro_name}` belongs to <@{author}>. You can only execute macros you created.",
+        )
+        return
+    
+    try:
+        # Execute the macro as the clicking user
+        result, echoes = execute_s7(
+            code, client, channel_id, user_id,
+            extra_bindings={"args": []},
+            macro_store_ref=macro_store,
+            storage_ref=storage,
+            trigger_id=trigger_id,
+        )
+        
+        # Send result as ephemeral to the clicking user
+        parts: List[str] = []
+        if echoes:
+            parts.extend(echoes)
+        if result is not None and not echoes:
+            parts.append(f"Result: `{result}`")
+        if parts:
+            client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="\n".join(parts),
+            )
+    except StepLimitExceeded as e:
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text=f":warning: *Execution killed:* {e}",
+        )
+    except S7Error as e:
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text=f":x: *S7 Error:* {e}",
+        )
+    except Exception as e:
+        logger.error("Unhandled error in button handler: %s", traceback.format_exc())
+        client.chat_postEphemeral(
+            channel=channel_id,
+            user=user_id,
+            text=f":x: *Internal error:* {e}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Modal submission handler
+# ---------------------------------------------------------------------------
+
+@app.view("s7_modal_submit")
+def handle_modal_submit(ack, body, client, view):
+    """Handle form submissions from showui modals."""
+    ack()
+    
+    import json
+    
+    # Extract metadata
+    try:
+        metadata = json.loads(view.get("private_metadata", "{}"))
+    except json.JSONDecodeError:
+        metadata = {}
+    
+    callback_macro = metadata.get("callback_macro", "")
+    channel_id = metadata.get("channel_id", "")
+    original_user_id = metadata.get("user_id", "")
+    field_count = metadata.get("field_count", 0)
+    
+    # The submitting user
+    user_id = body.get("user", {}).get("id", "")
+    
+    # User-dependent check: submitter must be the original user who opened the modal
+    if original_user_id != user_id:
+        # This shouldn't normally happen, but just in case
+        return
+    
+    if not callback_macro:
+        return
+    
+    # Extract field values
+    values = view.get("state", {}).get("values", {})
+    args = []
+    for i in range(field_count):
+        block_id = f"field_{i}"
+        action_id = f"input_{i}"
+        if block_id in values and action_id in values[block_id]:
+            args.append(values[block_id][action_id].get("value", ""))
+        else:
+            args.append("")
+    
+    # Look up and execute the callback macro
+    macro_data = macro_store.get_with_author(callback_macro)
+    if macro_data is None:
+        if channel_id:
+            client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text=f":x: Callback macro `{callback_macro}` not found.",
+            )
+        return
+    
+    code, author = macro_data
+    
+    # User-dependent check
+    if author != user_id:
+        if channel_id:
+            client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text=f":lock: Macro `{callback_macro}` belongs to <@{author}>.",
+            )
+        return
+    
+    try:
+        result, echoes = execute_s7(
+            code, client, channel_id, user_id,
+            extra_bindings={"args": args},
+            macro_store_ref=macro_store,
+            storage_ref=storage,
+        )
+        
+        # Send result as ephemeral
+        parts: List[str] = []
+        if echoes:
+            parts.extend(echoes)
+        if result is not None and not echoes:
+            parts.append(f"Result: `{result}`")
+        if parts and channel_id:
+            client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text="\n".join(parts),
+            )
+    except StepLimitExceeded as e:
+        if channel_id:
+            client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text=f":warning: *Execution killed:* {e}",
+            )
+    except S7Error as e:
+        if channel_id:
+            client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text=f":x: *S7 Error:* {e}",
+            )
+    except Exception as e:
+        logger.error("Unhandled error in modal handler: %s", traceback.format_exc())
+        if channel_id:
+            client.chat_postEphemeral(
+                channel=channel_id,
+                user=user_id,
+                text=f":x: *Internal error:* {e}",
+            )
 
 # ---------------------------------------------------------------------------
 # Main

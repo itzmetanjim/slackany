@@ -34,6 +34,14 @@ class MacroStore:
             ).fetchone()
         return row[0] if row else None
 
+    def get_with_author(self, name: str) -> Optional[tuple[str, str]]:
+        """Retrieve (code, author) for a named macro, or None if not found."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT code, author FROM macros WHERE name = ?", (name,)
+            ).fetchone()
+        return (row[0], row[1]) if row else None
+
     def set(self, name: str, code: str, author: str) -> None:
         """Create or update a named macro."""
         with sqlite3.connect(self.db_path) as conn:

@@ -25,6 +25,13 @@ class StepLimitExceeded(S7Error):
     """Raised when the step counter exceeds the configured maximum."""
 
 
+class S7Return(Exception):
+    """Control flow exception for (return) / (return value)."""
+    def __init__(self, value: Any = None):
+        self.value = value
+        super().__init__(f"return {value!r}")
+
+
 # ---------------------------------------------------------------------------
 # Environment (scope chain)
 # ---------------------------------------------------------------------------
@@ -78,11 +85,14 @@ class S7Lambda:
 # ---------------------------------------------------------------------------
 
 class Interpreter:
-    def __init__(self, env: Environment, step_limit: int = 50000):
+    def __init__(self, env: Environment, step_limit: int = 50000, macro_store: Any = None, caller_user_id: str | None = None):
         self.global_env = env
         self.step_limit = step_limit
         self.steps = 0
         self.output_lines: List[str] = []  # Collects echo output
+        self.macro_store = macro_store  # For (call "macro_name")
+        self.caller_user_id = caller_user_id  # For user-dependent macro checks
+        self.local_macros: Dict[str, Expr] = {}  # For (macro "name" (...)) scoped macros
 
     # -- Public API ---------------------------------------------------------
 
@@ -90,8 +100,11 @@ class Interpreter:
         """Parse and evaluate an S7 source string. Returns the last result."""
         exprs = parse(source)
         result = None
-        for expr in exprs:
-            result = self.eval(expr, self.global_env)
+        try:
+            for expr in exprs:
+                result = self.eval(expr, self.global_env)
+        except S7Return as ret:
+            return ret.value
         return result
 
     # -- Core eval ----------------------------------------------------------
@@ -168,8 +181,11 @@ class Interpreter:
     def _call_lambda(self, lam: S7Lambda, args: List[Any]) -> Any:
         child = lam.closure.child(dict(zip(lam.params, args)))
         result = None
-        for body_expr in lam.body:
-            result = self.eval(body_expr, child)
+        try:
+            for body_expr in lam.body:
+                result = self.eval(body_expr, child)
+        except S7Return as ret:
+            return ret.value
         return result
 
     # -- Helper: call a function that may be S7Lambda or Python callable ---
@@ -213,6 +229,14 @@ class Interpreter:
             return expr[1]
         if head == "do":
             return self._sf_begin(expr, env)  # alias
+        if head == "return":
+            return self._sf_return(expr, env)
+        if head == "error":
+            return self._sf_error(expr, env)
+        if head == "call":
+            return self._sf_call(expr, env)
+        if head == "macro":
+            return self._sf_macro(expr, env)
         return _NOT_SPECIAL
 
     # -- define -------------------------------------------------------------
@@ -360,6 +384,82 @@ class Interpreter:
         if not isinstance(collection, list):
             raise S7Error(f"filter: second argument must be a list, got {type(collection).__name__}")
         return [item for item in collection if self._apply(func, [item])]
+
+    # -- return -------------------------------------------------------------
+
+    def _sf_return(self, expr: List[Expr], env: Environment) -> Any:
+        # (return) or (return value)
+        if len(expr) > 2:
+            raise S7Error("return takes 0 or 1 argument")
+        value = None
+        if len(expr) == 2:
+            value = self.eval(expr[1], env)
+        raise S7Return(value)
+
+    # -- error --------------------------------------------------------------
+
+    def _sf_error(self, expr: List[Expr], env: Environment) -> Any:
+        # (error "message")
+        if len(expr) != 2:
+            raise S7Error("error requires exactly 1 argument")
+        msg = self.eval(expr[1], env)
+        raise S7Error(str(msg))
+
+    # -- call ---------------------------------------------------------------
+
+    def _sf_call(self, expr: List[Expr], env: Environment) -> Any:
+        # (call "macro_name" arg1 arg2 ...)
+        if len(expr) < 2:
+            raise S7Error("call requires at least a macro name")
+        name = self.eval(expr[1], env)
+        if not isinstance(name, str):
+            raise S7Error(f"call: macro name must be a string, got {type(name).__name__}")
+        
+        # Evaluate arguments
+        args = [self.eval(a, env) for a in expr[2:]]
+        
+        # Check local macros first
+        if name in self.local_macros:
+            code_ast = self.local_macros[name]
+            child = env.child({"args": args})
+            return self.eval(code_ast, child)
+        
+        # Then check stored macros
+        if self.macro_store is None:
+            raise S7Error(f"call: macro store not available")
+        
+        macro_data = self.macro_store.get_with_author(name)
+        if macro_data is None:
+            raise S7Error(f"call: macro '{name}' not found")
+        
+        code, author = macro_data
+        # User-dependent macro check
+        if self.caller_user_id and author != self.caller_user_id:
+            raise S7Error(f"call: macro '{name}' belongs to another user")
+        
+        # Parse and execute the macro code
+        macro_exprs = parse(code)
+        child = env.child({"args": args})
+        result = None
+        try:
+            for macro_expr in macro_exprs:
+                result = self.eval(macro_expr, child)
+        except S7Return as ret:
+            return ret.value
+        return result
+
+    # -- macro (local scoped) -----------------------------------------------
+
+    def _sf_macro(self, expr: List[Expr], env: Environment) -> Any:
+        # (macro "name" body)
+        if len(expr) != 3:
+            raise S7Error("macro requires exactly 2 arguments: name and body")
+        name = self.eval(expr[1], env)
+        if not isinstance(name, str):
+            raise S7Error(f"macro: name must be a string, got {type(name).__name__}")
+        # Store the unevaluated body as a local macro
+        self.local_macros[name] = expr[2]
+        return None
 
 
 # Make sentinel accessible at module level for the isinstance guard

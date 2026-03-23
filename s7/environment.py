@@ -36,6 +36,9 @@ def build_environment(
     user_id: str,
     power_users: List[str],
     echo_collector: List[str],
+    storage: Any = None,
+    trigger_id: str | None = None,
+    callback_macro: str | None = None,
 ) -> Environment:
     """
     Build the root S7 environment with all built-ins.
@@ -47,6 +50,9 @@ def build_environment(
     user_id : Slack user ID of the person who ran the command
     power_users : list of user IDs allowed to use privileged functions
     echo_collector : mutable list that echo() appends messages to
+    storage : S7Store instance for persistent key-value storage
+    trigger_id : Slack trigger_id for opening modals (from interactive events)
+    callback_macro : macro name to call when modal is submitted
     """
 
     def _echo(*args: Any) -> None:
@@ -183,6 +189,114 @@ def build_environment(
         int_args = [int(a) for a in args]
         return list(range(*int_args))
 
+    def _store(key: Any, value: Any) -> None:
+        """Store a value under a key (user-scoped)."""
+        if storage is None:
+            raise S7Error("storage not available")
+        storage.set(user_id, str(key), value)
+
+    def _read(key: Any) -> Any:
+        """Read a value from storage by key. Returns nil if not found."""
+        if storage is None:
+            raise S7Error("storage not available")
+        return storage.get(user_id, str(key))
+
+    def _delete_key(key: Any) -> bool:
+        """Delete a key from storage. Returns true if it existed."""
+        if storage is None:
+            raise S7Error("storage not available")
+        return storage.delete(user_id, str(key))
+
+    def _sendi(target: Any, text: Any, *buttons: Any) -> None:
+        """
+        Send a message with interactive buttons.
+        (sendi #channel "message" "btn1:macro1" "btn2:macro2" ...)
+        Each button is "label:macro_name" or just "label" (calls macro with same name).
+        """
+        target_id = resolve(target)[0]
+        text_str = str(text)
+        
+        button_elements = []
+        for btn in buttons:
+            btn_str = str(btn)
+            if ":" in btn_str:
+                label, macro_name = btn_str.split(":", 1)
+            else:
+                label = btn_str
+                macro_name = btn_str
+            button_elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": label},
+                "action_id": f"s7_button_{macro_name}",
+                "value": macro_name,
+            })
+        
+        blocks = [
+            {"type": "section", "text": {"type": "mrkdwn", "text": text_str}},
+        ]
+        if button_elements:
+            blocks.append({"type": "actions", "elements": button_elements})
+        
+        client.chat_postMessage(
+            channel=target_id,
+            text=text_str,
+            blocks=blocks,
+        )
+
+    def _showui(title: Any, callback: Any, *fields: Any) -> None:
+        """
+        Open a modal form dialog.
+        (showui "title" "callback_macro" "field1" "field2" ...)
+        
+        Each field creates a text input. When submitted, the callback macro
+        is called with args containing the field values in order.
+        
+        Note: This requires a trigger_id which is only available from
+        interactive contexts (button clicks, shortcuts).
+        """
+        if trigger_id is None:
+            raise S7Error("showui requires an interactive trigger (use from a button callback)")
+        
+        title_str = str(title)[:24]  # Slack limits title to 24 chars
+        callback_str = str(callback)
+        
+        # Build input blocks for each field
+        blocks = []
+        for i, field in enumerate(fields):
+            field_str = str(field)
+            blocks.append({
+                "type": "input",
+                "block_id": f"field_{i}",
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": f"input_{i}",
+                    "placeholder": {"type": "plain_text", "text": field_str},
+                },
+                "label": {"type": "plain_text", "text": field_str},
+            })
+        
+        # Encode callback info in private_metadata
+        import json
+        metadata = json.dumps({
+            "callback_macro": callback_str,
+            "channel_id": channel_id,
+            "user_id": user_id,
+            "field_count": len(fields),
+        })
+        
+        client.views_open(
+            trigger_id=trigger_id,
+            view={
+                "type": "modal",
+                "callback_id": "s7_modal_submit",
+                "title": {"type": "plain_text", "text": title_str},
+                "submit": {"type": "plain_text", "text": "Submit"},
+                "close": {"type": "plain_text", "text": "Cancel"},
+                "private_metadata": metadata,
+                "blocks": blocks,
+            },
+        )
+
     bindings: Dict[str, Any] = {
         # Context atoms
         "#!": lambda: channel_id,
@@ -256,6 +370,15 @@ def build_environment(
 
         # Debug
         "type": lambda x: type(x).__name__,
+
+        # Storage
+        "store": _store,
+        "read": _read,
+        "delete": _delete_key,
+
+        # Interactive UI
+        "sendi": _sendi,
+        "showui": _showui,
     }
 
     return Environment(bindings)

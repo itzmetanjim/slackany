@@ -48,3 +48,23 @@ class TestMacroStore:
 
     def test_list_all_empty(self, store):
         assert store.list_all() == []
+
+    def test_get_with_author(self, store):
+        store.set("greet", '(echo "hello")', "U123")
+        result = store.get_with_author("greet")
+        assert result is not None
+        code, author = result
+        assert code == '(echo "hello")'
+        assert author == "U123"
+
+    def test_get_with_author_nonexistent(self, store):
+        assert store.get_with_author("missing") is None
+
+    def test_get_with_author_after_update(self, store):
+        store.set("greet", '(echo "v1")', "U123")
+        store.set("greet", '(echo "v2")', "U456")
+        result = store.get_with_author("greet")
+        assert result is not None
+        code, author = result
+        assert code == '(echo "v2")'
+        assert author == "U456"  # Author updated to whoever last saved it
