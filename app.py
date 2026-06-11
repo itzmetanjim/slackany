@@ -170,7 +170,7 @@ def handle_s7_command(ack, body, client, respond):
 
         # --- Mode: help ---
         if lower_first == "help":
-            _handle_help(respond)
+            _handle_help(respond, body)
             return
 
         # --- Mode: store ---
@@ -297,42 +297,221 @@ def _handle_store(rest: str, user_id: str, respond):
     respond("\n".join(lines))
 
 
-def _handle_help(respond):
-    """Handle /s7 help."""
-    respond(
-        "*SlackAny (s7) — Lisp-based Slack Automation*\n\n"
-        "*Commands:*\n"
-        "• `/s7 (code...)` — Execute S7 code directly\n"
-        "• `/s7 set <name>\\n<code>` — Save a named macro\n"
-        "• `/s7 remove <name>` — Delete a macro\n"
-        "• `/s7 list` — Show all saved macros\n"
-        "• `/s7 <name> <args...>` — Execute a saved macro\n"
-        "• `/s7 store` — List your stored keys\n"
-        "• `/s7 store clear` — Clear all your stored data\n\n"
-        "*Built-in Functions:*\n"
-        "`echo`, `send`, `send2`, `members`, `addto`, `kick`, "
-        "`email`, `profile`, `str`, `strjoin`, `concat`, `length`, `index`, `flatten`, "
-        "`append`, `range`, `filter`, `map`, `abs`, `min`, `max`, `mod`\n\n"
-        "*Storage:*\n"
-        "`(store \"key\" value)` — Save a value\n"
-        "`(read \"key\")` — Read a stored value (nil if not found)\n"
-        "`(delete \"key\")` — Delete a stored key\n\n"
-        "*Interactive UI:*\n"
-        "`(sendi #channel \"msg\" \"btn1:macro1\" ...)` — Send message with buttons\n"
-        "`(showui \"title\" \"callback\" \"field1\" ...)` — Open modal form (from button)\n\n"
-        "*Control Flow:*\n"
-        "`if`/`elif`/`else`, `foreach`, `begin`, `define`, `lambda`, `let`\n"
-        "`(return)`, `(return value)` — Early return\n"
-        "`(error \"msg\")` — Throw an error\n"
-        "`(macro \"name\" body)` — Define a local macro\n"
-        "`(call \"name\" args...)` — Call a macro\n\n"
-        "*Context:*\n"
-        "`#!` → current channel, `@!` → current user\n\n"
-        "*Data:*\n"
-        "`[1, 2, 3]` → list literal, `list[0]` → index\n\n"
-        "*Operators:*\n"
-        "`+` `-` `*` `/` `>` `<` `>=` `<=` `!=` `==` `and` `or` `not`"
-    )
+def _handle_help(respond, body):
+    """Handle /s7 help with multi-page manpage-style tutorial."""
+    text = body.get("text", "").strip()
+    
+    if not text:
+        # Default: show page 1
+        page_content = _get_help_page(1)
+        respond(page_content)
+        return
+    
+    # Try to parse page number
+    if text.isdigit():
+        page_num = int(text)
+    else:
+        # Check for "help 2", "help 3", etc.
+        words = text.split()
+        if len(words) == 1 and words[0].isdigit():
+            page_num = int(words[0])
+        else:
+            respond(f"Unknown help topic. Use `/s7 help` to start the tutorial.")
+            return
+    
+    page_content = _get_help_page(page_num)
+    if page_content:
+        respond(page_content)
+    else:
+        respond(f"Help page {page_num} not found. Use `/s7 help` to start the tutorial.")
+
+
+def _get_help_page(page_num: int) -> str:
+    """Return help page content for the given page number."""
+    
+    if page_num == 1:
+        return (
+            "*SlackAny (s7) — Lisp-based Slack Automation*\n\n"
+            "=== Welcome to S7 ===\n\n"
+            "S7 (pronounced 'sea') is a Lisp-based scripting language for Slack automation.\n"
+            "It lets you write macros and automate tasks directly in Slack channels.\n\n"
+            "=== Quick Start ===\n\n"
+            "To get started:\n"
+            "1. Execute S7 code directly: `/s7 (!echo \"Hello\")`\n"
+            "2. Create saved macros: `/s7 set hello (!echo \"Hello World\")`\n"
+            "3. Execute macros: `/s7 hello`\n"
+            "4. View all macros: `/s7 list`\n\n"
+            "=== Getting Help ===\n\n"
+            "This is page 1. Use `/s7 help 2` to see Built-in Functions.\n"
+            "Use `/s7 help 3` to see Storage operations.\n"
+            "Use `/s7 help 4` to see Interactive UI.\n"
+            "Use `/s7 help 5` to see Control Flow.\n"
+            "Use `/s7 help 6` to see Context and Operators.\n\n"
+            "=== Examples ===\n\n"
+            "Here's a simple example that sends a message to #general:\n"
+            "```\n(send #general \"Hello from S7!\")\n```\n\n"
+            "You can also create and use macros for reusable automation.\n\n"
+            "Use `/s7 help` to start over, or `/s7 help 2` for built-in functions."
+        )
+    
+    elif page_num == 2:
+        return (
+            "*Built-in Functions (Page 2 of 6)*\n\n"
+            "=== Core Communication ===\n"
+            "`echo message...` — Log/debug message (visible to bot only)\n"
+            "`send target message...` — Send message to user/channel\n"
+            "  Target: <@U123> (user), #C123 (channel), or #! (current channel)\n"
+            "`sendi target text btn1 macro1 btn2 macro2 ...` — Send with buttons\n"
+            "`showui title callback field1 field2 ...` — Open modal form\n\n"
+            "=== User Management ===\n"
+            "`members #channel` — List all members in a channel\n"
+            "`addto @user1 @user2 #channel` — Add users to a channel\n"
+            "`kick #channel @user1 @user2` — Remove users from a channel (requires power user)\n"
+            "`email @user` — Get email of a Slack user\n"
+            "`profile @user [\"display_name|real_name|title|status_text\"]` — Get user profile data\n\n"
+            "=== Data Processing ===\n"
+            "`str value` — Convert to string representation\n"
+            "`strjoin separator list...` — Join list items with separator\n"
+            "`concat value1 value2 ...` — Concatenate strings\n"
+            "`length collection` — Get size of list or string\n"
+            "`index list index` — Get item at position\n"
+            "`flatten list...` — Flatten nested lists\n"
+            "`append list item...` — Add items to list\n"
+            "`range start end` — Create list of numbers\n"
+            "`filter function list` — Keep items matching condition\n"
+            "`map function list` — Apply function to all items\n"
+            "`abs number` — Absolute value\n"
+            "`min value1 value2 ...` — Minimum of values\n"
+            "`max value1 value2 ...` — Maximum of values\n"
+            "`mod dividend divisor` — Remainder after division\n\n"
+            "---\n\n"
+            "Use `/s7 help` for Page 1 or `/s7 help 3` for Storage."
+        )
+    
+    elif page_num == 3:
+        return (
+            "*Storage Operations (Page 3 of 6)*\n\n"
+            "=== Persistent Storage ===\n"
+            "S7 provides per-user key-value storage for your automation.\n\n"
+            "=== Save Data ===\n"
+            "`(store \"key\" value)` — Save a value for the current user\n"
+            "  Example: `(store \"score\" 42)`\n"
+            "  Values can be strings, numbers, or lists.\n\n"
+            "=== Read Data ===\n"
+            "`(read \"key\")` — Read a value from storage\n"
+            "  Returns `nil` if the key doesn't exist.\n"
+            "  Example: `(read \"score\")` might return 42.\n\n"
+            "=== Delete Data ===\n"
+            "`(delete \"key\")` — Delete a key from storage\n"
+            "  Returns `true` if the key existed, `false` otherwise.\n\n"
+            "=== View Your Storage ===\n"
+            "`/s7 store` — List all your stored keys and values\n"
+            "`/s7 store clear` — Clear all your stored data\n\n"
+            "=== Storage in Macros ===\n"
+            "Stored values persist between macro executions and are scoped to users.\n"
+            "For example: `(store \"last_message\" text)` then `(read \"last_message\")`.\n\n"
+            "---\n\n"
+            "Use `/s7 help` for Page 1 or `/s7 help 4` for Interactive UI."
+        )
+    
+    elif page_num == 4:
+        return (
+            "*Interactive UI (Page 4 of 6)*\n\n"
+            "=== Buttons & Modals ===\n"
+            "S7 supports interactive Slack UI elements to build rich interfaces.\n\n"
+            "=== Interactive Buttons ===\n"
+            "`sendi #channel \"Choose an option\" \"Yes:yes_macro\" \"No:no_macro\"`\n"
+            "Creates a message with clickable buttons. Each button triggers a macro.\n"
+            "Button format: `\"label:macro_name\"` or just `\"label\"` (calls macro with same name).\n\n"
+            "=== Modal Forms ===\n"
+            "`showui \"Form Title\" \"callback_macro\" \"Field 1\" \"Field 2\" ...`\n"
+            "Opens a modal dialog with text inputs.\n"
+            "When submitted, the callback_macro runs with field values as arguments.\n"
+            "Requires trigger_id (automatically handled from button clicks).\n\n"
+            "=== Use Cases ===\n"
+            "• Feedback forms with ratings and comments\n"
+            "• Configuration dialogs for bots\n"
+            "• Survey tools\n"
+            "• Approval workflows\n\n"
+            "=== Important Notes ===\n"
+            "• Modals require an interactive trigger_id\n"
+            "• Callback macros must belong to the user who opened the modal\n"
+            "• Field values are passed in order to the callback macro\n\n"
+            "---\n\n"
+            "Use `/s7 help` for Page 1 or `/s7 help 5` for Control Flow."
+        )
+    
+    elif page_num == 5:
+        return (
+            "*Control Flow (Page 5 of 6)*\n\n"
+            "=== Branching Logic ===\n"
+            "`if condition body` — Execute body if condition is true\n"
+            "`elif condition body` — Else-if branch\n"
+            "`else body` — Fallback branch\n"
+            "  Example: `(if (= x 5) (!echo \"It's five!\"))`\n\n"
+            "=== Iteration ===\n"
+            "`foreach item_name list body` — Loop over each item\n"
+            "  Example: `(foreach user (#C123 members) (!send @user \"Welcome!\"))`\n\n"
+            "=== Definition & Lambda ===\n"
+            "`define (name params...) body...` — Define named function\n"
+            "  Example: `(define (add a b) (+ a b))`\n"
+            "`lambda (params...) body...` — Anonymous function\n"
+            "`let ((x 10) (y 20)) body...` — Bind local variables\n\n"
+            "=== Function Calls ===\n"
+            "`(return)` — Exit current function\n"
+            "`(return value)` — Return a value from function\n"
+            "`(error \"message\")` — Throw an error\n"
+            "`(macro \"name\" body)` — Define a local macro\n"
+            "`(call \"macro_name\" args...)` — Execute a stored macro\n\n"
+            "=== Conditionals & Operators ===\n"
+            "Logical operators: `and`, `or`, `not`\n"
+            "Comparisons: `=`, `==`, `!=`, `>`, `<`, `>=`, `<=`\n"
+            "Boolean literals: `true`, `false`, `nil`\n"
+            "Boolean operators: `and`, `or`, `&&`, `||`, `not`\n\n"
+            "---\n\n"
+            "Use `/s7 help` for Page 1 or `/s7 help 6` for Context."
+        )
+    
+    elif page_num == 6:
+        return (
+            "*Context & Operators (Page 6 of 6)*\n\n"
+            "=== Context Variables ===\n"
+            "`#!` — Current channel ID where command was invoked\n"
+            "`@!` — Current user ID who invoked the command\n"
+            "These are available automatically in all S7 code.\n\n"
+            "=== Data Types ===\n"
+            "* Numbers: `1`, `-5`, `3.14`\n"
+            "* Strings: `\"hello\"`, `\"line1\\nline2\"`\n"
+            "* Lists: `[1, 2, 3]`, `(#C123 members)`\n"
+            "* Booleans: `true`, `false`\n"
+            "* Null: `nil`\n\n"
+            "=== Operators ===\n"
+            "* Arithmetic: `+`, `-`, `*`, `/`\n"
+            "* Comparison: `=`, `==`, `!=`, `>`, `<`, `>=`, `<=`\n"
+            "* Logic: `and`, `or`, `not`\n"
+            "* Boolean: `&&`, `||`\n\n"
+            "=== Lists ===\n"
+            "Lists are S7's primary data structure.\n"
+            "`[1, 2, 3]` — Create a list\n"
+            "`list[0]` — Access by index (0-based)\n"
+            "`(length [1, 2, 3])` — Get length\n"
+            "`(append [1] 2)` — Add item\n"
+            "`(map (+ x 1) [1, 2, 3])` — Apply function\n"
+            "`(filter (isEven x) [1, 2, 3, 4])` — Filter items\n"
+            "`(flatten [1, [2, [3]]])` — Flatten nested lists\n\n"
+            "=== Special Forms ===\n"
+            "S7 provides special forms for control flow and definitions.\n"
+            "See help page 5 for details.\n\n"
+            "=== Variables ===\n"
+            "Variables are set using `define` or `let`.\n"
+            "Variables can be updated with `set`.\n\n"
+            "---\n\n"
+            "Tutorial complete! Use `/s7 help` to restart.\n"
+            "These pages cover the essential S7 concepts for Slack automation.\n"
+        )
+    
+    else:
+        return None
 
 
 def _send_result(respond, result, echoes: List[str]):

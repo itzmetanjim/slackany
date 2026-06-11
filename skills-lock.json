@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "slack-bot-builder": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "skillPath": "skills/slack-bot-builder/SKILL.md",
+      "computedHash": "d52ac2f407c909ba12eedabd7a4fc4fa6710c697130ea87a2d87fd11e24cafe0"
+    }
+  }
+}

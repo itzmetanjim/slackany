@@ -4,7 +4,7 @@ S7 Environment builder -- wires up Slack API calls and built-in functions.
 Creates the root Environment that the interpreter uses, injecting:
   - Context atoms (#!, @!)
   - Arithmetic / logic operators
-  - Slack API wrappers (members, addto, kick, send, send2, echo)
+  - Slack API wrappers (members, addto, kick, send, echo)
   - Utility functions (str, strjoin, length, index, list helpers)
 """
 
@@ -64,26 +64,11 @@ def build_environment(
         if args:
             # _send(target, message...)
             target_id = resolve(target)[0]
-            text = f"[<@{user_id}>] " + " ".join(str(a) for a in args)
+            text = " ".join(str(a) for a in args)
         else:
             # _send(message...) - send to current channel
             target_id = channel_id
-            text = f"[<@{user_id}>] " + str(target)
-        client.chat_postMessage(channel=target_id, text=text)
-
-    def _send2(target: Any, *args: Any) -> None:
-        if args:
-            target_id = resolve(target)[0]
-            if user_id in power_users:
-                text = " ".join(str(a) for a in args)
-            else:
-                text = f"[<@{user_id}>] " + " ".join(str(a) for a in args)
-        else:
-            target_id = channel_id
-            if user_id in power_users:
-                text = str(target)
-            else:
-                text = f"[<@{user_id}>] " + str(target)
+            text = str(target)
         client.chat_postMessage(channel=target_id, text=text)
 
     def _members(channel: Any) -> List[str]:
@@ -347,7 +332,6 @@ def build_environment(
         # Communication
         "echo": _echo,
         "send": _send,
-        "send2": _send2,
 
         # Membership
         "members": _members,
