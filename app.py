@@ -170,7 +170,7 @@ def handle_s7_command(ack, body, client, respond):
 
         # --- Mode: help ---
         if lower_first == "help":
-            _handle_help(respond, body)
+            _handle_help(rest, respond)
             return
 
         # --- Mode: store ---
@@ -297,9 +297,9 @@ def _handle_store(rest: str, user_id: str, respond):
     respond("\n".join(lines))
 
 
-def _handle_help(respond, body):
+def _handle_help(rest: str, respond):
     """Handle /s7 help with multi-page manpage-style tutorial."""
-    text = body.get("text", "").strip()
+    text = rest.strip()
     
     if not text:
         # Default: show page 1
@@ -311,7 +311,7 @@ def _handle_help(respond, body):
     if text.isdigit():
         page_num = int(text)
     else:
-        # Check for "help 2", "help 3", etc.
+        # Accept page numbers like: /s7 help 2
         words = text.split()
         if len(words) == 1 and words[0].isdigit():
             page_num = int(words[0])
