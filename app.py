@@ -21,12 +21,14 @@ from typing import List
 from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from flask import request, Response
 
 from s7.environment import build_environment
 from s7.interpreter import Interpreter, S7Error, StepLimitExceeded
 from s7.macros import MacroStore
 from s7.parser import parse
 from s7.storage import S7Store
+from s7.workflows import WorkflowStore
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -52,6 +54,8 @@ logger = logging.getLogger("s7")
 app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
 macro_store = MacroStore(DB_PATH)
 storage = S7Store(STORAGE_DB_PATH)
+WORKFLOW_DB_PATH = os.environ.get("S7_WORKFLOW_DB_PATH", "s7_workflows.db")
+workflow_store = WorkflowStore(WORKFLOW_DB_PATH)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -101,6 +105,8 @@ def execute_s7(
     macro_store_ref=None,
     storage_ref=None,
     trigger_id: str | None = None,
+    workflow_store_ref=None,
+    workflow_id: str | None = None,
 ) -> tuple[str | None, List[str]]:
     """
     Execute S7 code and return (result, echo_lines).
@@ -118,6 +124,8 @@ def execute_s7(
         storage=storage_ref,
         trigger_id=trigger_id,
         local_macros_ref=local_macros_ref,
+        workflow_store_ref=workflow_store_ref,
+        workflow_id=workflow_id,
     )
     if extra_bindings:
         for k, v in extra_bindings.items():
@@ -170,6 +178,11 @@ def handle_s7_command(ack, body, client, respond):
         # --- Mode: help ---
         if lower_first == "help":
             _handle_help(rest, respond)
+            return
+
+        # --- Mode: workflow ---
+        if lower_first == "workflow":
+            _handle_workflow(rest, user_id, respond, client, channel_id)
             return
 
         # --- Mode: store ---
@@ -340,6 +353,97 @@ def _get_help_page(page_num: int) -> str:
         return f":warning: Help page {page_num} is empty."
 
     return content
+
+
+def _handle_workflow(rest: str, user_id: str, respond, client, channel_id: str):
+    """Handle /s7 workflow <subcommand> [args...]"""
+    rest = rest.strip()
+    if not rest:
+        respond("Usage: `/s7 workflow <create|list|publish|delete> ...`")
+        return
+    
+    parts = rest.split(None, 2)
+    subcmd = parts[0].lower()
+    
+    if subcmd == "create":
+        if len(parts) < 3:
+            respond("Usage: `/s7 workflow create <name> <display_name> [code]`\nCode can be provided on next lines after the command.")
+            return
+        name = parts[1].strip()
+        display_name = parts[2].strip()
+        code = parts[3] if len(parts) > 3 else ""
+        
+        # Check for name conflict with macros
+        if macro_store.get(name):
+            respond(f":x: A macro named `{name}` already exists. Workflow and macro names must be unique.")
+            return
+        
+        # Check for existing workflow
+        if workflow_store.get_by_name(name):
+            respond(f":x: A workflow named `{name}` already exists.")
+            return
+        
+        workflow_id = workflow_store.create(name, display_name, code, user_id)
+        respond(f":white_check_mark: Workflow `{name}` created with ID `{workflow_id}`.\nUse `/s7 workflow publish {name}` to publish it.")
+        return
+    
+    elif subcmd == "list":
+        workflows = workflow_store.list_all()
+        if not workflows:
+            respond("No workflows defined yet. Use `/s7 workflow create <name> <display_name> [code]` to create one.")
+            return
+        lines = ["*Workflows:*"]
+        for w in workflows:
+            status = ":white_check_mark: Published" if w["published"] else ":large_blue_circle: Draft"
+            lines.append(f"  `{w['name']}` — {w['display_name']} — {status} (by <@{w['author']}>)")
+        respond("\n".join(lines))
+        return
+    
+    elif subcmd == "publish":
+        if len(parts) < 2:
+            respond("Usage: `/s7 workflow publish <name>`")
+            return
+        name = parts[1].strip()
+        w = workflow_store.get_by_name(name)
+        if not w:
+            respond(f":x: Workflow `{name}` not found.")
+            return
+        
+        # Run the workflow code once to register triggers
+        if w["code"]:
+            try:
+                result, echoes = execute_s7(
+                    w["code"], client, channel_id, user_id,
+                    macro_store_ref=macro_store,
+                    storage_ref=storage,
+                    workflow_store_ref=workflow_store,
+                    workflow_id=w["id"],
+                )
+                # Collect echoes
+                output = "\n".join(echoes) if echoes else "Workflow initialization completed."
+            except Exception as e:
+                respond(f":x: Error running workflow initialization: {e}")
+                return
+        
+        workflow_store.publish(name)
+        # Generate the workflow URL
+        workflow_url = f"https://slackany.tanjim.org/workflow/{w['id']}"
+        respond(f":white_check_mark: Workflow `{name}` published!\nURL: {workflow_url}\nDisplay name: {w['display_name']}")
+        return
+    
+    elif subcmd == "delete":
+        if len(parts) < 2:
+            respond("Usage: `/s7 workflow delete <name>`")
+            return
+        name = parts[1].strip()
+        if workflow_store.delete(name):
+            respond(f":white_check_mark: Workflow `{name}` deleted.")
+        else:
+            respond(f":x: Workflow `{name}` not found.")
+        return
+    
+    else:
+        respond(f"Unknown workflow subcommand `{subcmd}`. Use: create, list, publish, delete")
 
 
 def _send_result(respond, result, echoes: List[str]):
@@ -594,6 +698,127 @@ def handle_modal_submit(ack, body, client, view):
                 user=user_id,
                 text=f":x: *Internal error:* {e}",
             )
+
+# ---------------------------------------------------------------------------
+# Workflow trigger event handlers
+# ---------------------------------------------------------------------------
+
+def execute_workflow_trigger(trigger_type: str, arg1: str = None, arg2: str = None, event_user: str = None, event_channel: str = None):
+    """Find and execute matching workflow triggers."""
+    triggers = workflow_store.get_triggers_by_type(trigger_type, arg1, arg2)
+    for trigger in triggers:
+        try:
+            execute_s7(
+                trigger["trigger_code"], app.client, event_channel or trigger["workflow_id"], event_user or "workflow_system",
+                macro_store_ref=macro_store,
+                storage_ref=storage,
+            )
+        except Exception as e:
+            logger.error("Error executing workflow trigger %s: %s", trigger["trigger_id"], e)
+
+
+@app.event("reaction_added")
+def handle_reaction_added(body, logger):
+    """Handle reaction_added events for workflow triggers."""
+    event = body.get("event", {})
+    channel = event.get("item", {}).get("channel")
+    emoji = event.get("reaction")
+    user = event.get("user")
+    if channel and emoji:
+        execute_workflow_trigger("reaction_added", channel, emoji, user, channel)
+
+
+@app.event("message")
+def handle_message(body, logger):
+    """Handle message events for workflow triggers."""
+    event = body.get("event", {})
+    # Skip bot messages and messages without text
+    if event.get("bot_id") or event.get("subtype"):
+        return
+    channel = event.get("channel")
+    user = event.get("user")
+    if channel and user:
+        execute_workflow_trigger("message_sent", channel, None, user, channel)
+
+
+# ---------------------------------------------------------------------------
+# Workflow HTTP endpoints
+# ---------------------------------------------------------------------------
+
+@app.route("/workflow/<workflow_id>", methods=["GET"])
+def workflow_page(workflow_id: str):
+    """Serve workflow page with Slack unfurl metadata and execute url_clicked triggers."""
+    w = workflow_store.get_by_id(workflow_id)
+    if not w or not w["published"]:
+        return Response("Workflow not found", status=404)
+    
+    # Execute url_clicked triggers
+    triggers = workflow_store.get_triggers_by_type("url_clicked", workflow_id=workflow_id)
+    for trigger in triggers:
+        try:
+            execute_s7(
+                trigger["trigger_code"], app.client, w["id"], "workflow_system",
+                macro_store_ref=macro_store,
+                storage_ref=storage,
+            )
+        except Exception as e:
+            logger.error("Error executing url_clicked trigger %s: %s", trigger["trigger_id"], e)
+    
+    # Slack unfurl HTML
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{w['display_name']}</title>
+    <meta property="og:title" content="{w['display_name']}">
+    <meta property="og:description" content="S7 Workflow - Click 'Run Workflow' to execute">
+    <meta property="og:type" content="website">
+    <meta name="slack-app-id" content="s7-workflow">
+    <script src="https://cdn.jsdelivr.net/npm/@slack/unfurl@latest/dist/unfurl.umd.min.js"></script>
+</head>
+<body>
+    <div style="font-family: sans-serif; max-width: 600px; margin: 50px auto; padding: 20px;">
+        <h1>{w['display_name']}</h1>
+        <p>This is an S7 workflow. Click the button below to run it.</p>
+        <form action="/workflow/{workflow_id}/run" method="POST">
+            <button type="submit" style="padding: 12px 24px; font-size: 16px; background: #4A154B; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                Run Workflow
+            </button>
+        </form>
+    </div>
+</body>
+</html>"""
+    return Response(html, mimetype="text/html")
+
+
+@app.route("/workflow/<workflow_id>/run", methods=["POST"])
+def workflow_run(workflow_id: str):
+    """Execute workflow when button is clicked."""
+    w = workflow_store.get_by_id(workflow_id)
+    if not w or not w["published"]:
+        return Response("Workflow not found", status=404)
+    
+    # Execute the workflow's triggers for button_clicked
+    triggers = workflow_store.get_triggers_by_type("button_clicked", workflow_id=workflow_id)
+    if not triggers:
+        return Response("No triggers configured for this workflow", status=400)
+    
+    # Execute each trigger's code
+    results = []
+    for trigger in triggers:
+        try:
+            # We need a client - use the app's client
+            result, echoes = execute_s7(
+                trigger["trigger_code"], app.client, w["id"], "workflow_system",
+                macro_store_ref=macro_store,
+                storage_ref=storage,
+            )
+            results.append(f"Trigger executed: {trigger['trigger_type']}")
+        except Exception as e:
+            results.append(f"Error: {e}")
+    
+    return Response("<html><body><h1>Workflow Executed</h1><p>" + "<br>".join(results) + "</p></body></html>", mimetype="text/html")
+
 
 # ---------------------------------------------------------------------------
 # Main

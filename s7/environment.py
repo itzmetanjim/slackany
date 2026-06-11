@@ -39,6 +39,8 @@ def build_environment(
     trigger_id: str | None = None,
     callback_macro: str | None = None,
     local_macros_ref: dict | None = None,
+    workflow_store_ref: Any = None,
+    workflow_id: str | None = None,
 ) -> Environment:
     """
     Build the root S7 environment with all built-ins.
@@ -188,6 +190,43 @@ def build_environment(
         if storage is None:
             raise S7Error("storage not available")
         return storage.delete(user_id, str(key))
+
+    def _trigger(trigger_spec: Any, code: Any) -> None:
+        """
+        Register a trigger for the current workflow.
+        (trigger ("url_clicked") code)
+        (trigger ("button_clicked") code)
+        (trigger ("message_sent" "#channel") code)
+        (trigger ("reaction_added" "#channel" "emoji_name") code)
+        """
+        if workflow_store_ref is None or workflow_id is None:
+            raise S7Error("trigger can only be used during workflow initialization")
+        
+        # Parse trigger spec
+        if not isinstance(trigger_spec, list):
+            raise S7Error("trigger spec must be a list: (\"trigger_type\" args...)")
+        
+        if len(trigger_spec) == 0:
+            raise S7Error("trigger spec must have at least a trigger type")
+        
+        trigger_type = str(trigger_spec[0])
+        trigger_args = [str(arg) for arg in trigger_spec[1:]]
+        
+        valid_triggers = {
+            "url_clicked": 0,
+            "button_clicked": 0,
+            "message_sent": 1,
+            "reaction_added": 2,
+        }
+        
+        if trigger_type not in valid_triggers:
+            raise S7Error(f"Unknown trigger type: {trigger_type}. Valid: url_clicked, button_clicked, message_sent, reaction_added")
+        
+        if len(trigger_args) != valid_triggers[trigger_type]:
+            raise S7Error(f"Trigger {trigger_type} expects {valid_triggers[trigger_type]} arguments, got {len(trigger_args)}")
+        
+        code_str = str(code)
+        workflow_store_ref.add_trigger(workflow_id, trigger_type, trigger_args, code_str)
 
     def _sendi(target: Any, text: Any, *buttons: Any) -> None:
         """
@@ -365,6 +404,9 @@ def build_environment(
         "store": _store,
         "read": _read,
         "delete": _delete_key,
+
+        # Workflows
+        "trigger": _trigger,
 
         # Interactive UI
         "sendi": _sendi,
