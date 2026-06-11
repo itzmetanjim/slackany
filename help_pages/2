@@ -1,0 +1,23 @@
+*Built-in Functions (Page 2 of 6)*
+
+=== Core Communication ===
+`echo message...` - Log/debug output in command response
+`send target message...` - Send message to user or channel
+  Target can be `@user, `#channel, a raw channel ID, or `#!` (current channel)
+`sendi target text "label:macro" ...` - Send interactive buttons
+`showui "title" "callback_macro" "field1" ...` - Open modal form
+
+=== User and Channel Ops ===
+`members #channel` - List members in channel
+`addto @user1 @user2 #channel` - Invite users to channel
+`kick #channel @user1 @user2` - Remove users from channel
+`email @user` - Get email for user
+`profile @user "display_name"` - Get profile field
+
+=== Data and Utilities ===
+`str value`, `strjoin sep list...`, `concat a b ...`
+`length x`, `index list i`, `flatten list...`, `append list items...`
+`range start end`, `map fn list`, `filter fn list`
+`abs x`, `min ...`, `max ...`, `mod a b`
+
+Use `/s7 help 3` for storage.

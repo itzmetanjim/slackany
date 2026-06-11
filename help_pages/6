@@ -1,0 +1,19 @@
+*Context and Operators (Page 6 of 6)*
+
+=== Context Atoms ===
+`#!` - current channel
+`@!` - current user
+
+=== Data Types ===
+Numbers, strings, lists, booleans (`true`/`false`), and `nil`.
+
+=== Operators ===
+Arithmetic: `+ - * / mod`
+Comparison: `= == != > < >= <=`
+Logic: `and or not && ||`
+
+=== Lists ===
+Literal: `[1, 2, 3]`
+Index: `list[0]` or `(index list 0)`
+
+Tutorial complete. Use `/s7 help` to return to page 1.

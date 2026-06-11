@@ -85,7 +85,7 @@ class S7Lambda:
 # ---------------------------------------------------------------------------
 
 class Interpreter:
-    def __init__(self, env: Environment, step_limit: int = 50000, macro_store: Any = None, caller_user_id: str | None = None):
+    def __init__(self, env: Environment, step_limit: int = 50000, macro_store: Any = None, caller_user_id: str | None = None, local_macros_ref: dict | None = None):
         self.global_env = env
         self.step_limit = step_limit
         self.steps = 0
@@ -93,6 +93,7 @@ class Interpreter:
         self.macro_store = macro_store  # For (call "macro_name")
         self.caller_user_id = caller_user_id  # For user-dependent macro checks
         self.local_macros: Dict[str, Expr] = {}  # For (macro "name" (...)) scoped macros
+        self.local_macros_ref = local_macros_ref  # Shared mutable dict for sending inline code to _sendi
 
     # -- Public API ---------------------------------------------------------
 
@@ -459,7 +460,30 @@ class Interpreter:
             raise S7Error(f"macro: name must be a string, got {type(name).__name__}")
         # Store the unevaluated body as a local macro
         self.local_macros[name] = expr[2]
+        # Also expose the source code to _sendi via the shared ref
+        if self.local_macros_ref is not None:
+            self.local_macros_ref[name] = expr_to_source(expr[2])
         return None
+
+
+def expr_to_source(expr: Expr) -> str:
+    """Convert an AST expression back to runnable S7 source code."""
+    if expr is None:
+        return "nil"
+    if isinstance(expr, bool):
+        return "true" if expr else "false"
+    if isinstance(expr, (int, float)):
+        return str(expr)
+    if isinstance(expr, S7String):
+        escaped = expr.value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        return f'"{escaped}"'
+    if isinstance(expr, S7SlackEntity):
+        return expr.raw
+    if isinstance(expr, str):
+        return expr
+    if isinstance(expr, list):
+        return "(" + " ".join(expr_to_source(e) for e in expr) + ")"
+    raise S7Error(f"Cannot convert to source: {expr!r}")
 
 
 # Make sentinel accessible at module level for the isinstance guard

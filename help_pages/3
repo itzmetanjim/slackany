@@ -1,0 +1,22 @@
+*Storage (Page 3 of 6)*
+
+=== Persistent Per-User Storage ===
+Storage is scoped by user ID. Your keys are separate from other users.
+
+=== Save ===
+`(store "key" value)`
+Example: `(store "score" 42)`
+
+=== Read ===
+`(read "key")`
+Returns `nil` when key is missing.
+
+=== Delete ===
+`(delete "key")`
+Returns `true` if deleted, `false` if key did not exist.
+
+=== Slash Helpers ===
+`/s7 store` - List your keys
+`/s7 store clear` - Delete all your stored keys
+
+Use `/s7 help 4` for interactive UI.

@@ -1,0 +1,21 @@
+*Control Flow (Page 5 of 6)*
+
+=== Branching ===
+`if`, `elif`, `else`
+Example:
+`(if (= x 5) (!echo "five") (else (!echo "other")))`
+
+=== Iteration ===
+`foreach`
+Example:
+`(foreach user (members #!) (send user "Welcome"))`
+
+=== Functions and Scope ===
+`define`, `lambda`, `let`, `set`
+`return` and `error` for flow control and failure
+
+=== Macros ===
+`(call "macro_name" "arg1" "arg2")` executes saved macros with args
+`(macro "name" body)` defines local macro (now works in buttons!)
+
+Use `/s7 help 6` for context and operators.

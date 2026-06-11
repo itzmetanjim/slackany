@@ -34,11 +34,11 @@ def build_environment(
     client: Any,
     channel_id: str,
     user_id: str,
-    power_users: List[str],
     echo_collector: List[str],
     storage: Any = None,
     trigger_id: str | None = None,
     callback_macro: str | None = None,
+    local_macros_ref: dict | None = None,
 ) -> Environment:
     """
     Build the root S7 environment with all built-ins.
@@ -48,7 +48,6 @@ def build_environment(
     client : slack_sdk.WebClient (or compatible)
     channel_id : current channel where the command was invoked
     user_id : Slack user ID of the person who ran the command
-    power_users : list of user IDs allowed to use privileged functions
     echo_collector : mutable list that echo() appends messages to
     storage : S7Store instance for persistent key-value storage
     trigger_id : Slack trigger_id for opening modals (from interactive events)
@@ -98,8 +97,6 @@ def build_environment(
                     echo_collector.append(f"addto error ({c}): {e}")
 
     def _kick(channel: Any, *targets: Any) -> None:
-        if user_id not in power_users:
-            raise S7Error("kick requires power-user privileges")
         cid = resolve(channel)[0]
         user_ids = resolve(list(targets))
         for uid in user_ids:
@@ -197,6 +194,7 @@ def build_environment(
         Send a message with interactive buttons.
         (sendi #channel "message" "btn1:macro1" "btn2:macro2" ...)
         Each button is "label:macro_name" or just "label" (calls macro with same name).
+        Local macros ((macro "name" body)) are automatically embedded in the button.
         """
         target_id = resolve(target)[0]
         text_str = str(text)
@@ -209,11 +207,19 @@ def build_environment(
             else:
                 label = btn_str
                 macro_name = btn_str
+            # Check if this is a local (inline) macro
+            if local_macros_ref is not None and macro_name in local_macros_ref:
+                inline_code = local_macros_ref[macro_name]
+                action_id = f"s7_inline_{macro_name}"
+                value = inline_code
+            else:
+                action_id = f"s7_button_{macro_name}"
+                value = macro_name
             button_elements.append({
                 "type": "button",
                 "text": {"type": "plain_text", "text": label},
-                "action_id": f"s7_button_{macro_name}",
-                "value": macro_name,
+                "action_id": action_id,
+                "value": value,
             })
         
         blocks = [

@@ -1,0 +1,34 @@
+*SlackAny (s7) - Lisp-based Slack Automation*
+
+=== Welcome to S7 ===
+
+S7 is a Lisp-like scripting language for Slack automation.
+It lets you write macros and automate workflows directly in channels.
+
+=== Quick Start ===
+
+To get started:
+1. Execute code directly: `/s7 (echo "Hello")`
+2. Save a global macro: (multiline command)
+```
+/s7 set hello
+(echo "Hello")
+```
+3. Run macro: `/s7 hello`
+4. List macros: `/s7 list`
+
+=== Getting Help ===
+
+This is page 1. Use:
+- `/s7 help 2` for Built-in Functions
+- `/s7 help 3` for Storage
+- `/s7 help 4` for Interactive UI
+- `/s7 help 5` for Control Flow
+- `/s7 help 6` for Context and Operators
+
+=== Example ===
+
+```
+(send #general "Hello from S7!")
+```
+Type `/s7 help 2` to go to the next page.

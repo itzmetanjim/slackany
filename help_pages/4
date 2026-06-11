@@ -1,0 +1,22 @@
+*Interactive UI (Page 4 of 6)*
+
+=== Buttons with `sendi` ===
+Example:
+`(sendi #! "Choose" "Yes:yes_macro" "No:no_macro")`
+
+Each button maps to a macro name (saved or local).
+Local macros work too - code is embedded in the button:
+```
+(begin
+  (macro "yes" (send "you picked yes"))
+  (sendi #! "choose" "yes:yes" "no:no")
+)
+
+=== Modals with `showui` ===
+Example:
+`(showui "Feedback" "save_feedback" "Rating" "Comment")`
+
+`showui` requires an interactive trigger (typically from a button click).
+Submitted field values become `args` in callback macro.
+
+Use `/s7 help 5` for control flow.
