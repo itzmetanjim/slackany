@@ -244,6 +244,8 @@ def build_environment(
         
         Note: This requires a trigger_id which is only available from
         interactive contexts (button clicks, shortcuts).
+        
+        Local macros ((macro "name" body)) are automatically embedded.
         """
         if trigger_id is None:
             raise S7Error("showui requires an interactive trigger (use from a button callback)")
@@ -266,10 +268,20 @@ def build_environment(
                 "label": {"type": "plain_text", "text": field_str},
             })
         
+        # Check if callback is a local macro - if so, embed the inline code
+        if local_macros_ref is not None and callback_str in local_macros_ref:
+            inline_code = local_macros_ref[callback_str]
+            is_inline = True
+        else:
+            inline_code = None
+            is_inline = False
+        
         # Encode callback info in private_metadata
         import json
         metadata = json.dumps({
             "callback_macro": callback_str,
+            "callback_inline": inline_code if is_inline else None,
+            "is_inline": is_inline,
             "channel_id": channel_id,
             "user_id": user_id,
             "field_count": len(fields),

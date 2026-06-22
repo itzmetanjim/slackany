@@ -503,6 +503,8 @@ def handle_modal_submit(ack, body, client, view):
         metadata = {}
     
     callback_macro = metadata.get("callback_macro", "")
+    callback_inline = metadata.get("callback_inline", None)
+    is_inline = metadata.get("is_inline", False)
     channel_id = metadata.get("channel_id", "")
     original_user_id = metadata.get("user_id", "")
     field_count = metadata.get("field_count", 0)
@@ -529,28 +531,33 @@ def handle_modal_submit(ack, body, client, view):
         else:
             args.append("")
     
-    # Look up and execute the callback macro
-    macro_data = macro_store.get_with_author(callback_macro)
-    if macro_data is None:
-        if channel_id:
-            client.chat_postEphemeral(
-                channel=channel_id,
-                user=user_id,
-                text=f":x: Callback macro `{callback_macro}` not found.",
-            )
-        return
-    
-    code, author = macro_data
-    
-    # User-dependent check
-    if author != user_id:
-        if channel_id:
-            client.chat_postEphemeral(
-                channel=channel_id,
-                user=user_id,
-                text=f":lock: Macro `{callback_macro}` belongs to <@{author}>.",
-            )
-        return
+    # Execute callback - inline (local macro) or stored macro
+    if is_inline and callback_inline:
+        # Inline code from local macro
+        code = callback_inline
+    else:
+        # Look up stored macro
+        macro_data = macro_store.get_with_author(callback_macro)
+        if macro_data is None:
+            if channel_id:
+                client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text=f":x: Callback macro `{callback_macro}` not found.",
+                )
+            return
+        
+        code, author = macro_data
+        
+        # User-dependent check
+        if author != user_id:
+            if channel_id:
+                client.chat_postEphemeral(
+                    channel=channel_id,
+                    user=user_id,
+                    text=f":lock: Macro `{callback_macro}` belongs to <@{author}>.",
+                )
+            return
     
     try:
         result, echoes = execute_s7(
